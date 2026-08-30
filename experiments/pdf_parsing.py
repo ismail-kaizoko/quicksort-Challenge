@@ -1,5 +1,12 @@
-""" Testing here three of the most common used pdf_parsing libraries : PyMuPDF, pdfplumber, and unstructured
+""" 
+Testing here three of the most common used pdf_parsing libraries : PyMuPDF, pdfplumber, and unstructured
 Experiments tested on "Attention is all you need" paper.
+
+
+Additional infos : 
+-Unstructured package need these shell commands, to install if not provided : 
+TesseractOCR : you can run in powershell : " winget install UB-Mannheim.TesseractOCR && $env:Path += ";C:\Program Files\Tesseract-OCR"  "
+Poppler forthe "hi_res" mode.
 
 
 """
@@ -8,14 +15,13 @@ import re
 import sys
 import time
 from pathlib import Path
-import pdfplumber
-from unstructured.partition.pdf import partition_pdf
-import fitz
+
 
 
 
 def run_pymupdf(path: str):
     t0 = time.perf_counter()
+    import fitz
     doc = fitz.open(path)
     pages = [{"page_number": i + 1, "text": p.get_text("text")} for i, p in enumerate(doc)]
     doc.close()
@@ -34,6 +40,7 @@ def save_text(name: str, text: str, out_dir: str = "./output") -> None:
 
 def run_pdfplumber(path: str):
     t0 = time.perf_counter()
+    import pdfplumber
     pages = []
     with pdfplumber.open(path) as pdf:
         for i, page in enumerate(pdf.pages):
@@ -46,9 +53,26 @@ def run_pdfplumber(path: str):
     return pages, elapsed
 
 
-def run_unstructured(path: str, strategy: str = "fast"):
+def run_unstructured(path: str, strategy):
     t0 = time.perf_counter()
-    elements = partition_pdf(filename=path, strategy=strategy)
+    from unstructured.partition.pdf import partition_pdf
+    # choice of parameters is justified following the documentation in this url : https://unstructured.readthedocs.io/en/main/core/partition.html#partition-pdf
+    img_path = f"./output/images/unstructured/{strategy}"
+    Path(img_path).mkdir(exist_ok=True, parents=True)
+
+    if strategy == "hi_res":
+        infer_table_structure = True
+    else : infer_table_structure = False
+
+    elements = partition_pdf(filename=path, 
+                             strategy=strategy, 
+                             extract_images_in_pdf=True,
+                             extract_image_block_types=["Image", "Table"],
+                             extract_image_block_output_dir=img_path,
+                             infer_table_structure = infer_table_structure,
+                             languages=["eng"],
+                             max_partition = None
+                             )
     elapsed = time.perf_counter() - t0
     pages = {}
     for el in elements:
@@ -70,17 +94,26 @@ def summarize(name: str, pages, elapsed: float, is_unstructured=False):
 
 if __name__ == "__main__":
     pdf_path = "data/Attention_Is_All_You_Need.pdf"
+
+
     # --- PyMuPDF ---
     pm_pages, pm_time = run_pymupdf(pdf_path)
     pm_text = summarize("PyMuPDF", pm_pages, pm_time)
     save_text("pymudf", pm_text)
+
+
 
     # --- pdfplumber ---
     pp_pages, pp_time = run_pdfplumber(pdf_path)
     pp_text = summarize("pdfplumber", pp_pages, pp_time)
     save_text("pdfplumber", pp_text)
 
+
+
     # --- unstructured ---
-    un_pages, un_time = run_unstructured(pdf_path, strategy="fast")
-    un_text = summarize("unstructured (fast)", un_pages, un_time, is_unstructured=True)
-    save_text("unstructured", un_text)
+    strats = ["hi_res", "ocr_only", "fast"]
+    for strat in strats :
+        print(f"\n unsing the '{strat}' strategy")
+        un_pages, un_time = run_unstructured(pdf_path, strategy=strat)
+        un_text = summarize(f"unstructured_{strat}", un_pages, un_time, is_unstructured=True)
+        save_text(f"unstructured_{strat}", un_text)
