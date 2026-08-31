@@ -4,8 +4,8 @@ Experiments tested on "Attention is all you need" paper.
 
 
 Additional infos : 
--Unstructured package need these shell commands, to install if not provided : 
-TesseractOCR : you can run in powershell : " winget install UB-Mannheim.TesseractOCR && $env:Path += ";C:\Program Files\Tesseract-OCR"  "
+- Unstructured package need these shell commands, to install if not provided : 
+- TesseractOCR : you can run in powershell : " winget install UB-Mannheim.TesseractOCR && $env:Path += ";C:\Program Files\Tesseract-OCR"  "
 Poppler forthe "hi_res" mode.
 
 
@@ -27,6 +27,7 @@ def run_pymupdf(path: str):
     doc.close()
     elapsed = time.perf_counter() - t0
     return pages, elapsed
+
 
 
 def save_text(name: str, text: str, out_dir: str = "./output") -> None:
