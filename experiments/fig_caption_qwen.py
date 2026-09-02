@@ -103,7 +103,7 @@ def caption_folder(folder_path):
 
     folder = Path(folder_path)
 
-    output_dir = Path("./output/qwen_captions")
+    output_dir = Path("./output/captions/qwen")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     model, processor = load_model()
@@ -139,4 +139,4 @@ def caption_folder(folder_path):
 
 
 if __name__ == "__main__":
-    caption_folder("./output/images/unstructured")
+    caption_folder("./data/figs")

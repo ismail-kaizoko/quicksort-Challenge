@@ -1,0 +1,3 @@
+The figure is a table that compares the training costs of different neural network architectures for the BLEU metric. The table has four columns: Model, EN-DE, EN-FR, and BLEU. The rows represent different models, including ByteNet, Deep-Att + PosUnk, GNMT + RL, Conv2S, MoE, Deep-Att + PosUnk Ensemble, GNMT + RL Ensemble, and Conv2S Ensemble. The training costs are listed in FLOPs (Floating-Point Operations Per Second).
+
+The main conclusion of the figure is that the Conv2S Ensemble model has the lowest training cost for the BLEU metric, with a value of 26.36 FLOPs. The GNMT + RL Ensemble model has the second-lowest training cost, with a value of 26.30 FLOPs. The other models have higher training costs, with the ByteNet model having the highest value of 23.75 FLOPs.

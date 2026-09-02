@@ -1,0 +1,9 @@
+The figure represents a Retrieval Augmented Generation (RAG) system's neural network architecture. The architecture consists of two main components: Positional Encoding and Output Embedding. Positional Encoding is used to encode the input embeddings in a way that takes into account the position of the input in the sequence. Output Embedding is used to generate the output embeddings for the RAG system.
+
+The RAG system uses a feed-forward network with two layers: Linear and Sigmoid. The Linear layer is used to add and normalize the input embeddings, while the Sigmoid layer is used to add and normalize the output embeddings. The output of the feed-forward network is then passed through a multi-head attention mechanism, which is used to generate the output embeddings.
+
+The RAG system also uses a technique called "Add & Norm" to add and normalize the output embeddings. This technique is used to improve the stability and performance of the RAG system.
+
+The main scientific purpose of the figure is to demonstrate the effectiveness of the RAG system in generating outputs that are shifted right compared to the inputs. The figure shows that the RAG system can generate outputs that are shifted right by up to 100 tokens, which is a significant improvement over traditional methods. The figure also shows that the RAG system can generate outputs that are shifted right by up to 200 tokens, which is an even greater improvement.
+
+Overall, the figure provides a detailed and technical description of the RAG system's neural network architecture and its effectiveness in generating outputs that are shifted right compared to the inputs.
