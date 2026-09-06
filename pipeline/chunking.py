@@ -1,47 +1,14 @@
-"""Chunk a docling-parsed markdown file into header-tagged, token-bounded chunks.
-
-Run: python3 chunk_docling_md.py <path_to_docling.md> [--max-tokens 512]
-
-Rules implemented:
-  - The FIRST "## ..." line in the document is the paper title. Everything
-    between it and the "## Abstract" header (author names, affiliations,
-    emails) is dropped entirely -- it is never embedded.
-  - From "## Abstract" onward, EVERY "## ..." line is a candidate section
-    header -- no leading number required (this was wrong in an earlier
-    version and is now removed; "Abstract" itself has no number).
-  - A header is still filtered out as noise -- WITHOUT requiring a number --
-    if the block immediately following it is an image/formula/caption/table
-    rather than real prose. This is how the OCR-injected pseudo-headings
-    ("## Scaled Dot-Product Attention", "## Input-Input Layer5" -- both are
-    mis-parsed figure-internal labels) get ignored: a genuine section always
-    opens with at least a sentence of real content, these don't.
-  - Numbered headers ("## 3 Model Architecture", "## 3.2 Attention") still
-    determine section vs subsection by their numbering depth. Unnumbered
-    headers ("Abstract", "References") are always treated as depth-1
-    (top-level) sections.
-  - EVERY chunk's embedded text starts with the paper title and section
-    path, so the paper name itself is part of what gets embedded, not just
-    metadata sitting next to it.
-  - Within a section, paragraphs are stuffed until the next one would push
-    the chunk over `max_tokens`; a new chunk then starts with the SAME
-    section header.
-  - Inline citations like "[12]" / "[2, 19]" are stripped.
-  - Paragraphs that are pure footnote markers -- starting with *, †, or ‡
-    (the "Equal contribution" / "Work performed while at ..." notes) -- are
-    dropped outright.
-  - Images, undecoded formulas, figure/table captions, and markdown tables
-    are dropped. If that drop leaves the previous paragraph mid-sentence
-    (it doesn't end in . ! ? or :), the next paragraph is glued onto it
-    instead of starting a new paragraph unit.
-  - Chunking STOPS entirely at the first "References"/"Bibliography" header
-    -- nothing after it is processed, not even if real section-like content
-    somehow follows.
-"""
+"""Chunk a docling-parsed markdown file into header-tagged, token-bounded chunks."""
 
 import argparse
 import json
 import re
 from pathlib import Path
+import yaml
+
+_config = yaml.safe_load(Path(__file__).parent.joinpath("config.yaml").read_text())
+DEFAULT_MAX_TOKENS = _config["chunking"]["max_tokens"]
+
 
 HEADER_RE = re.compile(r"^#{1,6}\s+(\S.*)$")
 NUMBER_PREFIX_RE = re.compile(r"^(\d+(?:\.\d+)*)\s+(.+)$")
@@ -70,10 +37,7 @@ def count_tokens(text: str) -> int:
 
 
 def is_junk_start(text: str) -> bool:
-    """Drop anything that doesn't start with a letter -- catches stray
-    reference/URL lines like '13 https://...' or '[14 https://...]', plus
-    footnote markers (*, †, ‡) -- while tolerating a markdown list bullet
-    ('- ...') so real bulleted content isn't lost."""
+    """Drop anything that doesn't start with a letter -- catches stray reference/URL lines"""
     stripped = re.sub(r"^-\s+", "", text)
     return not stripped[:1].isalpha()
 
@@ -222,12 +186,11 @@ def chunk_docling_markdown(md_text: str, max_tokens: int = 512) -> list[dict]:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("md_path")
-    parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--out", default="test/chunks.json")
     args = parser.parse_args()
 
     md_text = Path(args.md_path).read_text(encoding="utf-8")
-    chunks = chunk_docling_markdown(md_text, max_tokens=args.max_tokens)
+    chunks = chunk_docling_markdown(md_text, max_tokens=MAX_TOKENS_PER_CHUNK)
 
     Path(args.out).write_text(json.dumps(chunks, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"{len(chunks)} chunks written to {args.out}")

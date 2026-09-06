@@ -1,18 +1,3 @@
-"""Caption figures referenced in a docling markdown file and merge them into
-an existing chunks.json.
-
-Looks for the pattern:
-    Figure N: <original caption text>
-
-    ![Image](<path/to/image>.png)
-
-For each match: resolves the image path, captions it with moondream2 using
-the paper's own caption as context, and appends one new chunk to chunks.json.
-
-Run:
-    pip install transformers torch pillow einops timm --break-system-packages
-    python3 caption_figures.py docling.md chunks.json --out chunks_enriched.json
-"""
 import argparse
 import json
 import re
@@ -20,12 +5,27 @@ from pathlib import Path
 import torch
 
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForImageTextToText
+from transformers import AutoProcessor, AutoModelForMultimodalLM
+
+import yaml
 
 
-MODEL_ID = "HuggingFaceTB/SmolVLM2-500M-Instruct"
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-BATCH_SIZE = 4
+
+PROMPT = """
+You are analyzing a figure extracted from a scientific research paper.
+
+Your goal is to create a technically useful description for a Retrieval
+Augmented Generation (RAG) system.
+
+For ALL figures:
+- Describe what the figure represents.
+- Extract important visible labels and terminology.
+- Explain the main scientific purpose of the figure.
+"""
+
+_config = yaml.safe_load(Path(__file__).parent.joinpath("config.yaml").read_text())["captioning"]
+MODEL_ID = _config["captioning"]["model_id"]
+BATCH_SIZE = _config["captioning"]["batch_size"]
 
 
 # "Figure 1: caption text" -- also matches "Table N:" the same way
@@ -60,30 +60,79 @@ def find_figure_image_pairs(md_text: str, md_dir: Path) -> list[dict]:
 
 
 def load_model():
-    print(f"Loading model: {MODEL_ID}")
-    print(f"Device: {DEVICE}")
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
-    model = AutoModelForImageTextToText.from_pretrained(
-        MODEL_ID,
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Device: {device}")
+
+    # CUDA can use float16 for better speed/memory.
+    # CPU should use float32.
+    dtype = (
+        torch.float16
+        if device == "cuda"
+        else torch.float32
     )
-    model.to(DEVICE)
+
+    processor = AutoProcessor.from_pretrained(MODEL_ID)
+
+    model = AutoModelForMultimodalLM.from_pretrained(
+        MODEL_ID,
+        torch_dtype=dtype )
+
+
     model.eval()
+
+    print("Model loaded successfully.")
+
     return model, processor
 
 
-def caption_batch(model, tokenizer, batch: list[dict]) -> list[str]:
-    """One batched moondream2 call. Each image gets its OWN prompt built
-    from its OWN paper caption -- real textual context, not a generic
-    "describe this image" ask with no grounding."""
-    images = [Image.open(p["image_path"]).convert("RGB") for p in batch]
-    prompts = [
-        f'This is {p["label"]} from a research paper. '
-        f'Its original caption is: "{p["caption"]}". '
-        f"Describe what the figure shows and its key insight, in 2-3 sentences."
-        for p in batch
+def caption_batch(model, processor, batch: list[dict]) -> list[str]:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "content": batch,
+                },
+                {
+                    "type": "text",
+                    "text": PROMPT,
+                },
+            ],
+        }
     ]
-    return model.batch_answer(images=images, prompts=prompts, tokenizer=tokenizer)
 
+    # Processor handles image loading + tokenization
+    inputs = processor.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+    )
+
+    inputs = inputs.to(device)
+
+    with torch.inference_mode():
+
+        generated_ids = model.generate(
+            **inputs,
+            max_new_tokens=512,
+            do_sample=False,
+        )
+
+    # Remove the input tokens from generated output
+    input_length = inputs["input_ids"].shape[-1]
+
+    generated_ids = generated_ids[:, input_length:]
+
+    result = processor.batch_decode(
+        generated_ids,
+        skip_special_tokens=True,
+    )
+
+    return result.strip()
 
 def caption_all_figures(pairs: list[dict], model, tokenizer) -> list[dict]:
     """Caption every figure in mini-batches so CPU memory stays bounded

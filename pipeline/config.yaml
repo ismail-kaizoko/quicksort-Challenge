@@ -1,0 +1,6 @@
+chunking:
+  max_tokens: 512
+
+captioning:
+  model_id: "HuggingFaceTB/SmolVLM2-500M-Instruct"
+  batch_size: 4
