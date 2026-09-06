@@ -4,10 +4,23 @@
 
 ### How to use : 
 installing the depndencies : 
-minimal : 
-heavy (for experiments) : 
 
-> folder descriotion : 
+install system/external depnedenies first (if linux use the second command ):
+
+
+.\setup.ps1
+
+#for llinux : 
+chmod +x setup.sh
+./setup.sh
+
+
+remember to install additonal non-python packages and add them to the path.
+
+pwoershell :
+bash :
+
+> folder descriotion :
 experiments/ : contianing my expertiment records on a single paper.
 pipeline/ pridcuton grade-ready script. cleaned and tested to the best.
 
@@ -24,6 +37,16 @@ Unstructured : very heavy in dependences, very slow, and deepLearning based : th
 docling : 44.87
 
 > Images Handling : 
+
+
+
+times : 
+- pymu : 0.13
+- pumber : 1.05
+- un/hi-res : 95
+- un-ocr_only : 67
+- fast : .75
+
 
 
 ### Chunking :

@@ -2,3 +2,6 @@
 __pycache__
 .venv
 notes.txt
+experiments/output/
+temp/
+pipeline/test

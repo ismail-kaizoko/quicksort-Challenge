@@ -94,7 +94,7 @@ def summarize(name: str, pages, elapsed: float, is_unstructured=False):
 
 
 if __name__ == "__main__":
-    pdf_path = "data/Attention_Is_All_You_Need.pdf"
+    pdf_path = "data/ChunkNorris.pdf"
 
 
     # --- PyMuPDF ---

@@ -37,6 +37,7 @@ Rules implemented:
     -- nothing after it is processed, not even if real section-like content
     somehow follows.
 """
+
 import argparse
 import json
 import re
@@ -222,7 +223,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("md_path")
     parser.add_argument("--max-tokens", type=int, default=512)
-    parser.add_argument("--out", default="chunks.json")
+    parser.add_argument("--out", default="test/chunks.json")
     args = parser.parse_args()
 
     md_text = Path(args.md_path).read_text(encoding="utf-8")
