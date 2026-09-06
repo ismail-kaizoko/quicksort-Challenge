@@ -1,25 +1,64 @@
+"""Chunk a docling-parsed markdown file into header-tagged, token-bounded chunks.
+
+Run: python3 chunk_docling_md.py <path_to_docling.md> [--max-tokens 512]
+
+Rules implemented:
+  - The FIRST "## ..." line in the document is the paper title. Everything
+    between it and the "## Abstract" header (author names, affiliations,
+    emails) is dropped entirely -- it is never embedded.
+  - From "## Abstract" onward, EVERY "## ..." line is a candidate section
+    header -- no leading number required (this was wrong in an earlier
+    version and is now removed; "Abstract" itself has no number).
+  - A header is still filtered out as noise -- WITHOUT requiring a number --
+    if the block immediately following it is an image/formula/caption/table
+    rather than real prose. This is how the OCR-injected pseudo-headings
+    ("## Scaled Dot-Product Attention", "## Input-Input Layer5" -- both are
+    mis-parsed figure-internal labels) get ignored: a genuine section always
+    opens with at least a sentence of real content, these don't.
+  - Numbered headers ("## 3 Model Architecture", "## 3.2 Attention") still
+    determine section vs subsection by their numbering depth. Unnumbered
+    headers ("Abstract", "References") are always treated as depth-1
+    (top-level) sections.
+  - EVERY chunk's embedded text starts with the paper title and section
+    path, so the paper name itself is part of what gets embedded, not just
+    metadata sitting next to it.
+  - Within a section, paragraphs are stuffed until the next one would push
+    the chunk over `max_tokens`; a new chunk then starts with the SAME
+    section header.
+  - Inline citations like "[12]" / "[2, 19]" are stripped.
+  - Paragraphs that are pure footnote markers -- starting with *, †, or ‡
+    (the "Equal contribution" / "Work performed while at ..." notes) -- are
+    dropped outright.
+  - Images, undecoded formulas, figure/table captions, and markdown tables
+    are dropped. If that drop leaves the previous paragraph mid-sentence
+    (it doesn't end in . ! ? or :), the next paragraph is glued onto it
+    instead of starting a new paragraph unit.
+  - Chunking STOPS entirely at the first "References"/"Bibliography" header
+    -- nothing after it is processed, not even if real section-like content
+    somehow follows.
+"""
 import argparse
 import json
 import re
 from pathlib import Path
 
-
 HEADER_RE = re.compile(r"^#{1,6}\s+(\S.*)$")
 NUMBER_PREFIX_RE = re.compile(r"^(\d+(?:\.\d+)*)\s+(.+)$")
 
-IMAGE_MARKER_RE = re.compile(r"^<!--\s*image\s*-->$", re.IGNORECASE)
+IMAGE_MARKER_RE = re.compile(r"^(<!--\s*image\s*-->|!\[.*?\]\(.*?\))$", re.IGNORECASE)
 FORMULA_MARKER_RE = re.compile(r"^<!--\s*formula-not-decoded\s*-->$", re.IGNORECASE)
 CAPTION_RE = re.compile(r"^(Figure|Table)\s+\d+\s*:", re.IGNORECASE)
 TABLE_ROW_RE = re.compile(r"^\|")
-FOOTNOTE_MARKER_RE = re.compile(r"^[\*\u2217\u2020\u2021]")  # *, ∗, †, ‡
 
 CITATION_RE = re.compile(r"\s*\[\d+(?:\s*,\s*\d+)*\]")
 WHITESPACE_RE = re.compile(r"\s{2,}")
 
 STOP_SECTION_TITLES = {"references", "bibliography"}
-DROPPED_KINDS = {"image", "formula", "caption", "table", "footnote"}
-
-
+DROPPED_KINDS = {"image", "formula", "caption", "table", "junk"}
+KNOWN_UNNUMBERED_SECTIONS = {
+    "abstract", "limitations", "acknowledgements", "acknowledgments",
+    "appendix", "related work", "ethics statement", "broader impact",
+}
 
 _WORD_RE = re.compile(r"\S+")
 
@@ -27,6 +66,28 @@ _WORD_RE = re.compile(r"\S+")
 def count_tokens(text: str) -> int:
     """Rough approximation: 1.3 tokens per whitespace-separated word."""
     return int(len(_WORD_RE.findall(text)) * 1.3)
+
+
+def is_junk_start(text: str) -> bool:
+    """Drop anything that doesn't start with a letter -- catches stray
+    reference/URL lines like '13 https://...' or '[14 https://...]', plus
+    footnote markers (*, †, ‡) -- while tolerating a markdown list bullet
+    ('- ...') so real bulleted content isn't lost."""
+    stripped = re.sub(r"^-\s+", "", text)
+    return not stripped[:1].isalpha()
+
+
+def is_real_section(title: str):
+    """Return (accept, clean_title, depth). Numbered headers are always
+    accepted; unnumbered ones only if they're a known paper section --
+    otherwise it's noise (e.g. a mis-tagged author name)."""
+    m = NUMBER_PREFIX_RE.match(title)
+    if m:
+        numbering, clean_title = m.groups()
+        return True, clean_title, numbering.count(".") + 1
+    if title.lower() in KNOWN_UNNUMBERED_SECTIONS:
+        return True, title, 1
+    return False, title, 1
 
 
 def strip_citations(text: str) -> str:
@@ -54,37 +115,37 @@ def classify_block(block: str) -> str:
         return "caption"
     if TABLE_ROW_RE.match(block):
         return "table"
-    if FOOTNOTE_MARKER_RE.match(block):
-        return "footnote"
+    if is_junk_start(block):
+        return "junk"
     return "content"
 
 
+def make_chunk(paper_title, section, paragraphs, chunks):
+    """Turn the buffered paragraphs into one chunk and append it to `chunks`.
+    Mutates `chunks` directly (lists are mutable) -- no nonlocal needed."""
+    if not paragraphs:
+        return
+    body = "\n\n".join(paragraphs)
+    text = f"paper : {paper_title}\nsection : {section}\n\n{body}"
+    chunks.append({
+        "chunk_id": len(chunks),
+        "paper_title": paper_title,
+        "section": section,
+        "text": text,
+        "token_count": count_tokens(text),
+    })
+
+
 def chunk_docling_markdown(md_text: str, max_tokens: int = 512) -> list[dict]:
-    """Returns a list of {chunk_id, paper_title, section, text, token_count}."""
     blocks = split_blocks(md_text)
 
-    chunks: list[dict] = []
-    paper_title: str | None = None
-    in_frontmatter = False  # True while skipping the author/affiliation block
-    current_section_title: str | None = None
-    current_section_path: str | None = None
-    current_paragraphs: list[str] = []
-    current_tokens = 0
-
-    def flush():
-        nonlocal current_paragraphs, current_tokens
-        if current_paragraphs:
-            body = "\n\n".join(current_paragraphs)
-            embed_text = f"{paper_title}\nSection: {current_section_path}\n\n{body}"
-            chunks.append({
-                "chunk_id": len(chunks),
-                "paper_title": paper_title,
-                "section": current_section_path,
-                "text": embed_text,
-                "token_count": count_tokens(embed_text),
-            })
-        current_paragraphs = []
-        current_tokens = 0
+    chunks = []
+    paper_title = None
+    in_frontmatter = False
+    top_section = None       # current top-level section, for subsection paths
+    current_section = None
+    buffer = []               # paragraphs waiting to be flushed into a chunk
+    buffer_tokens = 0
 
     i = 0
     while i < len(blocks):
@@ -103,35 +164,26 @@ def chunk_docling_markdown(md_text: str, max_tokens: int = 512) -> list[dict]:
             if in_frontmatter:
                 if title.lower() == "abstract":
                     in_frontmatter = False
-                    # fall through: process as the first real section below
                 else:
                     i += 1  # still in the author/affiliation block -- drop
                     continue
 
             if title.lower() in STOP_SECTION_TITLES:
-                flush()
+                make_chunk(paper_title, current_section, buffer, chunks)
                 break  # hard stop: nothing after References is processed
 
-            # Noise-header check: a real section never opens with a dropped
-            # visual as its very first block.
-            next_kind = classify_block(blocks[i + 1]) if i + 1 < len(blocks) else "content"
-            if next_kind in {"image", "formula", "caption", "table"}:
-                i += 1  # ignore this header line only, keep current section
+            accept, clean_title, depth = is_real_section(title)
+            if not accept:
+                i += 1  # noise header (e.g. a mis-tagged author name)
                 continue
 
-            flush()
-            m = NUMBER_PREFIX_RE.match(title)
-            if m:
-                numbering, real_title = m.groups()
-                depth = numbering.count(".") + 1
-            else:
-                real_title, depth = title, 1
-
+            make_chunk(paper_title, current_section, buffer, chunks)
+            buffer, buffer_tokens = [], 0
             if depth == 1:
-                current_section_title = real_title
-                current_section_path = real_title
+                top_section = clean_title
+                current_section = clean_title
             else:
-                current_section_path = f"{current_section_title} : {real_title}"
+                current_section = f"{top_section} : {clean_title}"
             i += 1
             continue
 
@@ -149,22 +201,22 @@ def chunk_docling_markdown(md_text: str, max_tokens: int = 512) -> list[dict]:
             i += 1
             continue
 
-        if current_paragraphs and not ends_sentence(current_paragraphs[-1]):
-            current_paragraphs[-1] = f"{current_paragraphs[-1]} {text}"
-            current_tokens += count_tokens(text)
+        if buffer and not ends_sentence(buffer[-1]):
+            buffer[-1] = f"{buffer[-1]} {text}"
+            buffer_tokens += count_tokens(text)
             i += 1
             continue
 
         new_tokens = count_tokens(text)
-        if current_paragraphs and current_tokens + new_tokens > max_tokens:
-            flush()  # same current_section_path carries into the new chunk
-        current_paragraphs.append(text)
-        current_tokens += new_tokens
+        if buffer and buffer_tokens + new_tokens > max_tokens:
+            make_chunk(paper_title, current_section, buffer, chunks)
+            buffer, buffer_tokens = [], 0
+        buffer.append(text)
+        buffer_tokens += new_tokens
         i += 1
 
-    flush()
+    make_chunk(paper_title, current_section, buffer, chunks)
     return chunks
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
